@@ -1,0 +1,21 @@
+host: 'localhost'
+port: 8086
+database: 'test_db'
+
+retention_policies:
+  - name: 'five_year_rp'
+    duration: '1825d'
+    replication: 1
+    shard_duration: '30d'
+    default: false
+  - name: 'one_month_rp'
+    duration: '30d'
+    replication: 1
+    shard_duration: '7d'
+    default: false
+  - name: 'one_week_rp'
+    duration: '7d'
+    replication: 1
+    shard_duration: '1d'
+    default: true
+
