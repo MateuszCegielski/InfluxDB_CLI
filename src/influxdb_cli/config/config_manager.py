@@ -11,7 +11,7 @@ def get_user_config_path():
     return config_dir / 'config.yaml'
 
 def load_default_config() -> dict:
-    with open(Path().cwd() / 'default_config.yaml', 'r') as file:
+    with open(Path(__file__).parent / 'default_config.yaml', 'r') as file:
         return yaml.safe_load(file)
 
 def load_user_config() -> dict:

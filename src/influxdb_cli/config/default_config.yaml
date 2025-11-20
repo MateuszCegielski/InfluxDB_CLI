@@ -1,7 +1,6 @@
 host: 'localhost'
 port: 8086
 database: 'test_db'
-
 retention_policies:
   - name: 'five_year_rp'
     duration: '1825d'
