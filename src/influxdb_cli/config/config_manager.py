@@ -1,8 +1,22 @@
 import yaml
 from pathlib import Path
 from platformdirs import user_config_dir
+from pydantic import BaseModel, Field
+
+class InvalidConfigError(Exception):
+    def __init__(self, message: str = "Configuration file is invalid.") -> None:
+        super().__init__(message)
 
 APP_NAME = 'influxdb_cli'
+
+class ConfigModel(BaseModel):
+    host: str = Field(description="InfluxDB host address")
+    port: int = Field(description="InfluxDB port number")
+    retention_policies: list[dict] = Field(
+        default=[],
+        description="List of retention policies to create with databases"
+    )
+    database: str | None = Field(default=None, description="Default database to use")
 
 
 def get_user_config_path():
@@ -25,7 +39,32 @@ def load_user_config() -> dict:
             yaml.safe_dump(default_config, file)
             return {}
 
-def load_config()  -> dict:
+def save_config(config: ConfigModel):
+    user_config_path = get_user_config_path()
+    with open(user_config_path, 'w') as file:
+        yaml.safe_dump(config.model_dump(), file)
+    return
+
+def _validate_dict_keys(dictionary: dict, required_keys: list[str]):
+    for key in required_keys:
+        if key not in dictionary:
+            raise InvalidConfigError(f"Missing required key: {key}")
+    return
+
+def _validate_config(config: dict) -> bool:
+    required_keys = ['host', 'port']
+    _validate_dict_keys(dictionary=config, required_keys=required_keys)
+    if "retention_policies" in config:
+        for rp in config["retention_policies"]:
+            _validate_dict_keys(
+                dictionary=rp,
+                required_keys=['name', 'duration', 'replication', 'shard_duration', 'default'])
+    return True
+
+def load_config()  -> ConfigModel:
     default_config = load_default_config()
     user_config = load_user_config()
-    return {**default_config, **user_config}
+    return ConfigModel(**{**default_config, **user_config})
+
+if __name__ == "__main__":
+    print(load_config().model_dump_json(indent=2))
