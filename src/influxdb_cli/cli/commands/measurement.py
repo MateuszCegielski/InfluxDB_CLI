@@ -51,3 +51,60 @@ def add_measurements(
     )
     typer.echo(f"Added {measurements} measurements to database: "
                f"{database_name or client.config.database}.")
+
+@app.command(name="delete", help="Delete a measurement from a database.")
+def delete_measurement(
+        measurement_name: str = typer.Argument(help="Name of the measurement to delete."),
+        database_name: str = typer.Option(None,"--database_name", "-d",
+                                          help="Name of the database if not using the any "
+                                               "database or wanting to delete measurement from "
+                                               "the specific one without checking out.")
+):
+    """Delete a measurement from the specified database."""
+    client = InfluxClient()
+    client.delete_measurement(
+        measurement_name=measurement_name,
+        database_name=database_name
+    )
+    typer.echo(f"Measurement '{measurement_name}' deleted from database: "
+               f"{database_name or client.config.database}.")
+
+@app.command(name="show", help="Show content of a measurement.")
+def show_measurement(
+        measurement_name: str = typer.Argument(help="Name of the measurement to show."),
+        retention_policy: str = typer.Option(None, "--retention-policy", "-r",
+                                          help="Retention policy of the measurement."),
+        column_names: str = typer.Option(None, "--column", "-c",
+                                        help="Specific column(s) to display."),
+        from_time: str = typer.Option(None, "--from-time", "-f",
+                                      help="Start time for the data range."),
+        to_time: str = typer.Option(None, "--to-time", "-t",
+                                    help="End time for the data range."),
+        where_clause: str = typer.Option(None, "--where-clause", "-w",
+                                        help="Additional WHERE clause for filtering data."),
+        limit: int = typer.Option(None, "--limit", "-l",
+                                  help="Limit the number of results returned."),
+        database_name: str = typer.Option(None,"--database_name", "-d",
+                                          help="Name of the database if not using the any "
+                                               "database or wanting to show measurement from "
+                                               "the specific one without checking out."),
+        path: str = typer.Option(None,"--path", "-p",
+                                          help="Path to the file to save the measurement.")
+):
+    influx_client = InfluxClient()
+    results = influx_client.show_measurement(
+        measurement_name=measurement_name,
+        retention_policy=retention_policy,
+        column_names=column_names,
+        from_time=from_time,
+        to_time=to_time,
+        where_clause= where_clause,
+        limit=limit,
+        database_name=database_name or influx_client.config.database,
+        path=path
+    )
+    if path:
+        typer.echo(f"Saved {results} records from measurement '{measurement_name}' to {path}.")
+        return
+    typer.echo(f"Displayed command result from measurement '{measurement_name}':")
+    typer.echo(results)

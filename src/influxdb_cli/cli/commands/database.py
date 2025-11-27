@@ -67,3 +67,18 @@ def use_database(
     influx_client = InfluxClient()
     influx_client.switch_database(database_name)
     typer.echo(f"Active database set to '{database_name}'.")
+
+@app.command(name="clean", help="Clean a database by removing all data.")
+def clean_database(
+        database_name: str = typer.Option(None, "--database-name","-d",
+                                          help="Name of the database to clean, if not using the "
+                                              "current one."),
+        exclude_measurements: str = typer.Option(None, "--except", "-e",
+                                    help="Name of the measurement to exclude from cleaning")
+):
+    influx_client = InfluxClient()
+    influx_client.clean_database(
+        database_name=database_name or influx_client.config.database,
+        exclude_measurements=exclude_measurements
+    )
+    typer.echo(f"Database '{database_name}' cleaned successfully.")

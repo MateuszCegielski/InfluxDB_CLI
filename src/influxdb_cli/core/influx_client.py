@@ -11,8 +11,14 @@ EXTENSIONS_READER_MAPPING = {
     '.xlsx': pd.read_excel,
     '.parquet': pd.read_parquet,
     '.feather': pd.read_feather
+}
 
-
+EXTENSIONS_WRITER_MAPPING = {
+    '.csv': pd.DataFrame.to_csv,
+    '.json': pd.DataFrame.to_json,
+    '.xlsx': pd.DataFrame.to_excel,
+    '.parquet': pd.DataFrame.to_parquet,
+    '.feather': pd.DataFrame.to_feather
 }
 
 def file_reader(file_path: str) -> pd.DataFrame:
@@ -22,9 +28,15 @@ def file_reader(file_path: str) -> pd.DataFrame:
     extension = file_path.suffix.lower()
     if extension not in EXTENSIONS_READER_MAPPING:
         raise ValueError(f"Unsupported file extension: {extension}")
-    reader_function = EXTENSIONS_READER_MAPPING[extension]
-    df = reader_function(file_path)
-    return df
+    return EXTENSIONS_READER_MAPPING[extension](file_path)
+
+def file_writer(df: pd.DataFrame, file_path: str):
+    file_path = Path(file_path)
+    extension = file_path.suffix.lower()
+    if extension not in EXTENSIONS_WRITER_MAPPING:
+        raise ValueError(f"Unsupported file extension: {extension}")
+    EXTENSIONS_WRITER_MAPPING[extension](df, file_path)
+    return
 
 
 class InfluxClient(DataFrameClient):
@@ -106,7 +118,7 @@ class InfluxClient(DataFrameClient):
         self.config.database = database_name
         return
 
-    def show_measurements(self, database_name: str | None = None ) -> list[str]:
+    def show_measurements(self) -> list[str]:
         result = self.query("SHOW MEASUREMENTS")
         measurements = [measurement['name'] for measurement in result.get_points()]
         return measurements
@@ -132,6 +144,13 @@ class InfluxClient(DataFrameClient):
         )
         return len(data)
 
+    def delete_measurement(self, measurement_name: str, database_name: str | None = None):
+        prev_db = self.config.database
+        self.switch_database(database_name)
+        self.query(f"DROP MEASUREMENT {measurement_name}")
+        self.switch_database(prev_db)
+        return
+
     def add_measurement_from_dir(
             self,
             file_path: str | None = None,
@@ -156,4 +175,60 @@ class InfluxClient(DataFrameClient):
                     time_precision='ms',
                     batch_size=1000
                 )
+        return
+
+    def show_measurement(
+            self,
+            measurement_name: str,
+            database_name: str,
+            retention_policy: str | None = None,
+            column_names: str | list[str] | None = None,
+            from_time: str | None = None,
+            to_time: str | None = None,
+            where_clause: str | None = None,
+            limit: int | None = None,
+            path: str | None = None
+    ) -> pd.DataFrame | int:
+        prev_db = self.config.database
+        try:
+            self.switch_database(database_name)
+
+            if isinstance(column_names, str):
+                column_names = [column_names]
+
+            select_clause = ", ".join(column_names) if column_names else "*"
+
+            from_clause = f"{retention_policy}.{measurement_name}" if retention_policy else measurement_name
+
+            conditions = []
+            if from_time:
+                conditions.append(f"time >= '{from_time}'")
+            if to_time:
+                conditions.append(f"time <= '{to_time}'")
+            if where_clause:
+                conditions.append(where_clause)
+
+            where_clause_str = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+            limit_clause = f" LIMIT {limit}" if limit else ""
+
+            query = f"SELECT {select_clause} FROM {from_clause}{where_clause_str}{limit_clause}"
+
+            result = self.query(query)
+            df_result = pd.DataFrame(result[measurement_name])
+            if path:
+                file_writer(df_result, path)
+                return len(df_result)
+            return pd.DataFrame(result[measurement_name])
+        finally:
+            self.switch_database(prev_db)
+
+    def clean_database(self, database_name: str, exclude_measurements: list[str] | None = None):
+        prev_db = self.config.database
+        self.switch_database(database_name)
+        measurements = self.show_measurements()
+        for measurement in measurements:
+            if exclude_measurements and measurement in exclude_measurements:
+                continue
+            self.query(f"DROP MEASUREMENT {measurement}")
+        self.switch_database(prev_db)
         return
