@@ -30,7 +30,7 @@ def file_reader(file_path: str) -> pd.DataFrame:
         raise ValueError(f"Unsupported file extension: {extension}")
     return EXTENSIONS_READER_MAPPING[extension](file_path)
 
-def file_writer(df: pd.DataFrame, file_path: str):
+def file_writer(df: pd.DataFrame, file_path: str) -> None:
     file_path = Path(file_path)
     extension = file_path.suffix.lower()
     if extension not in EXTENSIONS_WRITER_MAPPING:
