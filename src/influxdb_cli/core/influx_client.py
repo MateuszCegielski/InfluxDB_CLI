@@ -38,6 +38,26 @@ def file_writer(df: pd.DataFrame, file_path: str) -> None:
     EXTENSIONS_WRITER_MAPPING[extension](df, file_path)
     return
 
+def timestamp_passer(timestamp: str) -> str:
+    rfc3339_pattern = "%Y-%m-%dT%H:%M:%SZ"
+    supported_patterns = [
+        rfc3339_pattern,
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%d %H:%M:%S.%f"
+    ]
+    for pattern in supported_patterns:
+        if is_valid_timestamp(timestamp, pattern):
+            return pd.to_datetime(timestamp).strftime(rfc3339_pattern)
+    raise ValueError(f"Timestamp '{timestamp}' does not match any supported format.")
+
+def is_valid_timestamp(timestamp: str, pattern: str) -> bool:
+    try:
+        pd.to_datetime(timestamp, format=pattern)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 
 class InfluxClient(DataFrameClient):
     def __init__(self):
@@ -84,7 +104,7 @@ class InfluxClient(DataFrameClient):
             rps.append({
                 "name": rp["name"],
                 "duration": rp["duration"],
-                "replication": rp["replication"],
+                "replication": rp["replicaN"],
                 "shard_duration": rp["shardGroupDuration"],
                 "default": rp["default"]
             })
@@ -97,6 +117,7 @@ class InfluxClient(DataFrameClient):
     def modify_retention_policy(
             self,
             retention_policy_name: str,
+            database: str,
             new_duration: str = None,
             new_replication: int = None,
             set_default: bool = False
@@ -110,7 +131,7 @@ class InfluxClient(DataFrameClient):
             query_parts.append("DEFAULT")
         query_str = " ".join(query_parts)
         if query_str:
-            self.query(f"ALTER RETENTION POLICY {retention_policy_name} {query_str}")
+            self.query(f"ALTER RETENTION POLICY {retention_policy_name} ON {database} {query_str}")
         return
 
     def switch_database(self, database_name: str):
@@ -130,8 +151,10 @@ class InfluxClient(DataFrameClient):
             measurement_name: str | None = None
     ):
         data = file_reader(file_path)
-        if 'timestamp' not in data.columns:
-            data.index = pd.date_range(start=pd.Timestamp.now(), periods=len(data), freq='ms')
+        if type(data.index) != pd.DatetimeIndex:
+            # TODO: fix format issue
+            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+            data.index = pd.date_range(start=start_ts, periods=len(data), freq='ms', tz="UTC")
         if measurement_name is None:
             measurement_name = Path(file_path).stem
 
@@ -191,6 +214,9 @@ class InfluxClient(DataFrameClient):
     ) -> pd.DataFrame | int:
         prev_db = self.config.database
         try:
+            from_time = timestamp_passer(from_time) if from_time else None
+            to_time = timestamp_passer(to_time) if to_time else None
+
             self.switch_database(database_name)
 
             if isinstance(column_names, str):
