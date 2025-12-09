@@ -39,16 +39,16 @@ def file_writer(df: pd.DataFrame, file_path: str) -> None:
     return
 
 def timestamp_passer(timestamp: str) -> str:
-    rfc3339_pattern = "%Y-%m-%dT%H:%M:%SZ"
+    rfc3339_pattern = "%Y-%m-%dT%H:%M:%S.%fZ"
     supported_patterns = [
-        rfc3339_pattern,
         "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        rfc3339_pattern,
         "%Y-%m-%d %H:%M:%S.%f"
     ]
     for pattern in supported_patterns:
         if is_valid_timestamp(timestamp, pattern):
-            return pd.to_datetime(timestamp).strftime(rfc3339_pattern)
+            return pd.to_datetime(timestamp, format="ISO8601").strftime(rfc3339_pattern)
     raise ValueError(f"Timestamp '{timestamp}' does not match any supported format.")
 
 def is_valid_timestamp(timestamp: str, pattern: str) -> bool:
@@ -66,6 +66,41 @@ class InfluxClient(DataFrameClient):
 
     def __del__(self):
         save_config(self.config)
+
+    def _to_dataframe(self, rs, dropna=True, data_frame_index=None):
+        """Override the parent _to_dataframe to handle mixed ISO8601 timestamp formats."""
+        from collections import defaultdict
+        result = defaultdict(list)
+
+        for series in rs.raw.get("series", []):
+            name = series.get("name")
+            tags = series.get("tags", {})
+            columns = series.get("columns", [])
+            values = series.get("values", [])
+
+            # Build key based on name and tags
+            if tags:
+                key = (name, tuple(sorted(tags.items())))
+            else:
+                key = name
+
+            # Convert rows to dictionaries
+            for row in values:
+                point = dict(zip(columns, row))
+                # Convert time strings using format='ISO8601' to handle mixed formats
+                if 'time' in point:
+                    point['time'] = pd.to_datetime(point['time'], format='ISO8601')
+                result[key].append(point)
+
+        df_dict = {}
+        for key in result:
+            df_dict[key] = pd.DataFrame(result[key])
+            if dropna:
+                df_dict[key].dropna(inplace=True)
+            if data_frame_index:
+                df_dict[key].set_index(data_frame_index, inplace=True)
+
+        return df_dict
 
     def is_default_rp(self, default_rp: bool) -> str:
         if default_rp:
@@ -153,7 +188,7 @@ class InfluxClient(DataFrameClient):
         data = file_reader(file_path)
         if type(data.index) != pd.DatetimeIndex:
             # TODO: fix format issue
-            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             data.index = pd.date_range(start=start_ts, periods=len(data), freq='ms', tz="UTC")
         if measurement_name is None:
             measurement_name = Path(file_path).stem
