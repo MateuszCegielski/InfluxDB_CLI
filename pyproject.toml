@@ -14,4 +14,4 @@ dependencies = [
     "influxdb==5.3.2",
 ]
 [project.scripts]
-influx = "influxdb_cli.main:app"
+influx = "influxdb_cli.cli.main:app"
