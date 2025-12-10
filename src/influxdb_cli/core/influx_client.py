@@ -1,9 +1,8 @@
 from pathlib import Path
 
+import pandas as pd
 from influxdb import DataFrameClient
 from influxdb_cli.config.config_manager import load_config, save_config
-import pandas as pd
-
 
 EXTENSIONS_READER_MAPPING = {
     '.csv': pd.read_csv,
@@ -21,6 +20,7 @@ EXTENSIONS_WRITER_MAPPING = {
     '.feather': pd.DataFrame.to_feather
 }
 
+
 def file_reader(file_path: str) -> pd.DataFrame:
     file_path = Path(file_path)
     if not file_path.exists() or not file_path.is_file():
@@ -30,6 +30,7 @@ def file_reader(file_path: str) -> pd.DataFrame:
         raise ValueError(f"Unsupported file extension: {extension}")
     return EXTENSIONS_READER_MAPPING[extension](file_path)
 
+
 def file_writer(df: pd.DataFrame, file_path: str) -> None:
     file_path = Path(file_path)
     extension = file_path.suffix.lower()
@@ -37,6 +38,7 @@ def file_writer(df: pd.DataFrame, file_path: str) -> None:
         raise ValueError(f"Unsupported file extension: {extension}")
     EXTENSIONS_WRITER_MAPPING[extension](df, file_path)
     return
+
 
 def timestamp_passer(timestamp: str) -> str:
     rfc3339_pattern = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -51,6 +53,7 @@ def timestamp_passer(timestamp: str) -> str:
             return pd.to_datetime(timestamp, format="ISO8601").strftime(rfc3339_pattern)
     raise ValueError(f"Timestamp '{timestamp}' does not match any supported format.")
 
+
 def is_valid_timestamp(timestamp: str, pattern: str) -> bool:
     try:
         pd.to_datetime(timestamp, format=pattern)
@@ -62,7 +65,8 @@ def is_valid_timestamp(timestamp: str, pattern: str) -> bool:
 class InfluxClient(DataFrameClient):
     def __init__(self):
         self.config = load_config()
-        super().__init__(host=self.config.host, port=self.config.port, database=self.config.database)
+        super().__init__(host=self.config.host, port=self.config.port,
+                         database=self.config.database)
 
     def __del__(self):
         save_config(self.config)
@@ -155,8 +159,8 @@ class InfluxClient(DataFrameClient):
             self,
             retention_policy_name: str,
             database: str,
-            new_duration: str = None,
-            new_replication: int = None,
+            new_duration: str | None = None,
+            new_replication: int | None = None,
             set_default: bool = False
     ):
         query_parts = []
@@ -176,9 +180,14 @@ class InfluxClient(DataFrameClient):
         self.config.database = database_name
         return
 
-    def show_measurements(self) -> list[str]:
+    def show_measurements(self, database_name: str | None = None) -> list[str]:
+        prev_database = self.config.database
+        if database_name:
+            self.switch_database(database_name)
         result = self.query("SHOW MEASUREMENTS")
         measurements = [measurement['name'] for measurement in result.get_points()]
+        if database_name and prev_database:
+            self.switch_database(prev_database)
         return measurements
 
     def add_measurements(
@@ -224,7 +233,8 @@ class InfluxClient(DataFrameClient):
             if file.is_file():
                 data = file_reader(str(file))
                 if type(data.index) != pd.DatetimeIndex:
-                    data.index = pd.date_range(start=pd.Timestamp.now(), periods=len(data), freq='ms')
+                    data.index = pd.date_range(start=pd.Timestamp.now(), periods=len(data),
+                                               freq='ms')
                 measurement = measurement_name
                 self.create_database(file.stem, retention_policy=True)
                 self.write_points(
