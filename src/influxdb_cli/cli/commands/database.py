@@ -18,10 +18,24 @@ def create_database(
 
 @app.command(name="delete", help="Delete a database.")
 def delete_database(
-        database_name: str = typer.Argument(help="Name of the database to delete")
+        database_name: str = typer.Argument(help="Name of the database to delete"),
+        delete_all_databases: bool = typer.Option(
+            False, "--all", "-a", help="Delete all databases (use with caution!)")
 ):
     influx_client = InfluxClient()
-    influx_client.delete_database(database_name)
+    if delete_all_databases:
+        confirm = typer.confirm(
+            "Are you sure you want to delete ALL databases? This action cannot be undone.")
+        if not confirm:
+            typer.echo("Operation cancelled.")
+            raise typer.Exit()
+        databases = influx_client.list_databases()
+        for db in databases:
+            influx_client.delete_database(db)
+        typer.echo("All databases deleted successfully.")
+        raise typer.Exit()
+    else:
+        influx_client.delete_database(database_name)
     typer.echo("Database deleted successfully.")
 
 

@@ -108,6 +108,8 @@ class InfluxClient(DataFrameClient):
         return ""
 
     def create_database(self, dbname: str, retention_policy: bool = False):
+        if dbname in self.list_databases():
+            raise ValueError(f"Database '{dbname}' already exists.")
         self.query(f"CREATE DATABASE {dbname}")
         if retention_policy is None:
             return
@@ -187,8 +189,7 @@ class InfluxClient(DataFrameClient):
     ):
         data = file_reader(file_path)
         if type(data.index) != pd.DatetimeIndex:
-            # TODO: fix format issue
-            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%SZ")
             data.index = pd.date_range(start=start_ts, periods=len(data), freq='ms', tz="UTC")
         if measurement_name is None:
             measurement_name = Path(file_path).stem
@@ -222,7 +223,7 @@ class InfluxClient(DataFrameClient):
         for file in dir_path.iterdir():
             if file.is_file():
                 data = file_reader(str(file))
-                if 'timestamp' not in data.columns:
+                if type(data.index) != pd.DatetimeIndex:
                     data.index = pd.date_range(start=pd.Timestamp.now(), periods=len(data), freq='ms')
                 measurement = measurement_name
                 self.create_database(file.stem, retention_policy=True)
