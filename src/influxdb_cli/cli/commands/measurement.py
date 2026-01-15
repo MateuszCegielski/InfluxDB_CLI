@@ -33,10 +33,14 @@ def add_measurements(
                                                    "under the  measurements namespace. If not provided"
                                                    ", the file name will be used as the "
                                                    "measurement name."),
+        add_batch_timestamp: bool = typer.Option(
+            False, "--add_batch_timestamp", "-b", help="Add the first timestamp of data "
+                                                       "to batch_timestamp measurement."),
         database_name: str = typer.Option(None, "--database_name", "-d",
                                           help="Name of the database if not using any "
                                                "database or wanting to add measurement to the "
-                                               "specific one without checking out.")
+                                               "specific one without checking out."
+                                               "DO NOT use when adding from directory.")
 ):
     """Count all measurements in the specified database."""
     client = InfluxClient()
@@ -46,14 +50,16 @@ def add_measurements(
     if dir_path:
         client.add_measurement_from_dir(
             file_path=dir_path,
-            measurement_name=measurement_name
+            measurement_name=measurement_name,
+            add_batch_timestamp=add_batch_timestamp,
         )
         typer.echo(f"Created databases and added measurements from directory: {dir_path}.")
         return
     measurements = client.add_measurements(
         database_name=database_name,
         file_path=file_path,
-        measurement_name=measurement_name
+        measurement_name=measurement_name,
+        add_batch_timestamp=add_batch_timestamp,
     )
     typer.echo(f"Added {measurements} measurements to database: "
                f"{database_name or client.config.database}.")

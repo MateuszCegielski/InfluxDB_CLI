@@ -67,9 +67,10 @@ class InfluxClient(DataFrameClient):
         self.config = load_config()
         super().__init__(host=self.config.host, port=self.config.port,
                          database=self.config.database)
-
-    def __del__(self):
-        save_config(self.config)
+        try:
+            super().ping()
+        except Exception as e:
+            raise ConnectionError("Could not connect to InfluxDB.") from e
 
     def _to_dataframe(self, rs, dropna=True, data_frame_index=None):
         """Override the parent _to_dataframe to handle mixed ISO8601 timestamp formats."""
@@ -190,27 +191,29 @@ class InfluxClient(DataFrameClient):
             self.switch_database(prev_database)
         return measurements
 
-    def add_measurements(
+    def add_first_timestamp_to_batch_measurement(
             self,
-            database_name: str | None = None,
-            file_path: str | None = None,
-            measurement_name: str | None = None
+            database_name: str,
+            measurement_name: str,
+            batch_measurement_name: str = "batch_timestamps"
     ):
-        data = file_reader(file_path)
-        if type(data.index) != pd.DatetimeIndex:
-            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-            data.index = pd.date_range(start=start_ts, periods=len(data), freq='ms', tz="UTC")
-        if measurement_name is None:
-            measurement_name = Path(file_path).stem
-
+        query = f"""SELECT * FROM {measurement_name} ORDER BY time ASC LIMIT 1"""
+        result = self.query(query)
+        first_timestamp = result[measurement_name]['time'].iloc[0]
+        first_timestamp_str = pd.to_datetime(first_timestamp).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        print(f"First timestamp for measurement '{measurement_name}': {first_timestamp_str}")
+        batch_data = pd.DataFrame(
+            data={'end_time': [first_timestamp_str]},
+            index=[pd.to_datetime(pd.Timestamp.now())]
+        )
         self.write_points(
-            dataframe=data,
-            measurement=measurement_name,
-            database=database_name or self.config.database,
+            dataframe=batch_data,
+            measurement=batch_measurement_name,
+            database=database_name,
             time_precision='ms',
             batch_size=1000
         )
-        return len(data)
+        return
 
     def delete_measurement(self, measurement_name: str, database_name: str | None = None):
         prev_db = self.config.database
@@ -219,10 +222,38 @@ class InfluxClient(DataFrameClient):
         self.switch_database(prev_db)
         return
 
+    def add_measurements(
+            self,
+            database_name: str | None = None,
+            file_path: str | None = None,
+            measurement_name: str | None = None,
+            add_batch_timestamp: bool = False
+    ):
+        data = file_reader(file_path)
+        if type(data.index) != pd.DatetimeIndex:
+            start_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+            data.index = pd.date_range(start=start_ts, periods=len(data), freq='ms', tz="UTC")
+        if measurement_name is None:
+            measurement_name = Path(file_path).stem
+        self.write_points(
+            dataframe=data,
+            measurement=measurement_name,
+            database=database_name or self.config.database,
+            time_precision='ms',
+            batch_size=1000
+        )
+        if add_batch_timestamp:
+            self.add_first_timestamp_to_batch_measurement(
+                database_name=database_name or self.config.database,
+                measurement_name=measurement_name
+            )
+        return len(data)
+
     def add_measurement_from_dir(
             self,
             file_path: str | None = None,
-            measurement_name: str | None = None
+            measurement_name: str | None = None,
+            add_batch_timestamp: bool = False
     ):
         if file_path is None:
             raise ValueError("Directory path must be provided.")
@@ -230,22 +261,27 @@ class InfluxClient(DataFrameClient):
         if not dir_path.exists() or not dir_path.is_dir():
             raise FileNotFoundError(f"Directory not found: {dir_path}")
         for file in dir_path.iterdir():
-            if file.is_file():
-                data = file_reader(str(file))
-                if type(data.index) != pd.DatetimeIndex:
-                    data.index = pd.date_range(start=pd.Timestamp.now(), periods=len(data),
-                                               freq='ms')
-                measurement = measurement_name
-                self.create_database(file.stem, retention_policy=True)
-                self.write_points(
-                    dataframe=data,
-                    measurement=measurement,
-                    database=file.stem,
-                    time_precision='ms',
-                    batch_size=1000
+            if not file.is_file():
+                continue
+            data = file_reader(str(file))
+            if type(data.index) != pd.DatetimeIndex:
+                data.index = pd.date_range(start=pd.Timestamp.now(), periods=len(data),
+                                           freq='ms')
+            measurement = measurement_name
+            self.create_database(file.stem, retention_policy=True)
+            self.write_points(
+                dataframe=data,
+                measurement=measurement,
+                database=file.stem,
+                time_precision='ms',
+                batch_size=1000
+            )
+            if add_batch_timestamp:
+                self.add_first_timestamp_to_batch_measurement(
+                    database_name=file.stem,
+                    measurement_name=measurement
                 )
         return
-
     def show_measurement(
             self,
             measurement_name: str,
@@ -284,9 +320,8 @@ class InfluxClient(DataFrameClient):
             limit_clause = f" LIMIT {limit}" if limit else ""
 
             query = f"SELECT {select_clause} FROM {from_clause}{where_clause_str}{limit_clause}"
-
             result = self.query(query)
-            df_result = pd.DataFrame(result[measurement_name])
+            df_result = pd.DataFrame(result[measurement_name]).set_index("time", drop=True)
             if path:
                 file_writer(df_result, path)
                 return len(df_result)
