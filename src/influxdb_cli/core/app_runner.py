@@ -129,6 +129,7 @@ class AppRunner:
         test_databases = [db['name'] for db in result.get_points() if db['name'].startswith(prefix)]
         if not test_databases:
             raise ValueError("No test databases found.")
+        print("Databases found:", test_databases)
         return test_databases
 
     def switch_database(self, database_name: str | None):

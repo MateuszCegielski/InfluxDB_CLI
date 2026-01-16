@@ -179,6 +179,7 @@ class InfluxClient(DataFrameClient):
     def switch_database(self, database_name: str):
         super().switch_database(database_name)
         self.config.database = database_name
+        save_config(self.config)
         return
 
     def show_measurements(self, database_name: str | None = None) -> list[str]:
@@ -197,14 +198,14 @@ class InfluxClient(DataFrameClient):
             measurement_name: str,
             batch_measurement_name: str = "batch_timestamps"
     ):
+        self.switch_database(database_name)
         query = f"""SELECT * FROM {measurement_name} ORDER BY time ASC LIMIT 1"""
         result = self.query(query)
         first_timestamp = result[measurement_name]['time'].iloc[0]
         first_timestamp_str = pd.to_datetime(first_timestamp).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        print(f"First timestamp for measurement '{measurement_name}': {first_timestamp_str}")
         batch_data = pd.DataFrame(
             data={'end_time': [first_timestamp_str]},
-            index=[pd.to_datetime(pd.Timestamp.now())]
+            index=[pd.to_datetime(pd.Timestamp.now(tz="UTC"))]
         )
         self.write_points(
             dataframe=batch_data,
@@ -213,10 +214,13 @@ class InfluxClient(DataFrameClient):
             time_precision='ms',
             batch_size=1000
         )
+        print(f"Added the first timestamp {first_timestamp_str} for measurement "
+              f"'{measurement_name}' in database '{database_name}'.")
         return
 
     def delete_measurement(self, measurement_name: str, database_name: str | None = None):
         prev_db = self.config.database
+        database_name = database_name or self.config.database
         self.switch_database(database_name)
         self.query(f"DROP MEASUREMENT {measurement_name}")
         self.switch_database(prev_db)
