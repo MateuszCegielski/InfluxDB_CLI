@@ -134,9 +134,11 @@ class InfluxClient(DataFrameClient):
         self.query(f"DROP DATABASE {dbname}")
         return
 
-    def list_databases(self) -> list[str]:
+    def list_databases(self, prefix: str = "") -> list[str]:
         result = self.query("SHOW DATABASES")
-        databases = [db['name'] for db in result.get_points()]
+        databases = [db['name'] for db in result.get_points() if db['name'].startswith(prefix)]
+        if not databases:
+            raise ValueError("No databases found.")
         return databases
 
     def list_retention_policies(self, dbname: str) -> list[dict]:

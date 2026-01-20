@@ -27,6 +27,21 @@ def path_passer(path: str) -> pathlib.Path:
         raise FileNotFoundError(f"Config file not found at {path}")
     return config_path
 
+def clean_up(database_prefix: str = "test"):
+    """Clean up measurement results for all test databases."""
+    influxdb_cli = InfluxClient()
+    databases = influxdb_cli.list_databases(prefix=database_prefix)
+    for db in databases:
+        influxdb_cli.clean_database(
+            database_name=db,
+            exclude_measurements=["driveline_power_data"]
+        )
+        influxdb_cli.add_first_timestamp_to_batch_measurement(
+            database_name=db,
+            measurement_name="driveline_power_data",
+        )
+        print("Cleaned up database:", db)
+
 
 class AppRunner:
     """Class to run tests on application."""
@@ -90,18 +105,6 @@ class AppRunner:
         with open(self.app_config_path, "w") as f:
             json.dump(config_data, f, indent=4)
 
-    def clean_up(self):
-        databases = self.get_test_databases()
-        for db in databases:
-            self.influxdb_cli.clean_database(
-                database_name=db,
-                exclude_measurements=["driveline_power_data"]
-            )
-            self.influxdb_cli.add_first_timestamp_to_batch_measurement(
-                database_name=db,
-                measurement_name="driveline_power_data",
-            )
-
     def restart_container(self):
         """Restart the docker container."""
         subprocess.run(["docker", "restart", self.docker_container_name])
@@ -117,20 +120,6 @@ class AppRunner:
         if "Driveline is not rotating, batch skipped." in logs:
             return True
         return False
-
-    def get_test_databases(self, prefix: str = "test") -> list:
-        """Get the list of test databases.
-        Returns
-        -------
-        list
-            List of test database names.
-        """
-        result = self.influxdb_cli.query(f"SHOW DATABASES")
-        test_databases = [db['name'] for db in result.get_points() if db['name'].startswith(prefix)]
-        if not test_databases:
-            raise ValueError("No test databases found.")
-        print("Databases found:", test_databases)
-        return test_databases
 
     def switch_database(self, database_name: str | None):
         """Switch the database in the application config.
@@ -167,10 +156,10 @@ class AppRunner:
             time.sleep(check_interval_sec)
         print("Run complete.")
 
-    def run(self, check_interval_sec: int = 30):
+    def run(self, check_interval_sec: int = 30, database_prefix: str = "test"):
         """Run tests on all test databases."""
         try:
-            test_databases = self.get_test_databases()
+            test_databases = self.influxdb_cli.list_databases(prefix=database_prefix)
             for db in test_databases:
                 print(f"Switching to database: {db}")
                 self.switch_database(db)

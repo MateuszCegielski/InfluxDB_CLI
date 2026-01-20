@@ -1,6 +1,6 @@
 import typer
 
-from influxdb_cli.core.app_runner import AppRunner
+from influxdb_cli.core.app_runner import AppRunner, clean_up
 from influxdb_cli.core.influx_client import InfluxClient
 
 app = typer.Typer(name="measurement")
@@ -23,15 +23,8 @@ def run_app(
 
 @app.command(name="clean-up", help="Clean up measurement results for an application.")
 def clean_up(
-        container_name: str = typer.Argument(help="Name of the application container "
-                                                  "to clean up measurement results from"),
-        config_path: str = typer.Argument(help="Path to the application config file")
+        database_prefix: str = typer.Argument(help="Prefix of the databases to clean up"),
 ):
     """Clean up measurement results for a specified application container."""
-    app_runner = AppRunner(
-        app_config_path=config_path,
-        docker_container_name=container_name,
-        influxdb_cli=InfluxClient()
-    )
-    app_runner.clean_up()
-    typer.echo("Cleaned up measurement results for container {}".format(container_name))
+    clean_up(database_prefix)
+    typer.echo(f"Cleaned up measurements for databases which starts with '{database_prefix}'")
