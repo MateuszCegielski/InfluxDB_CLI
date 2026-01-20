@@ -24,7 +24,7 @@ def run_app(
     app_runner.run(check_interval_sec=check_interval, database_prefix=database_prefix)
 
 @app.command(name="clean-up", help="Clean up measurement results for an application.")
-def clean_up(
+def clean_up_databases(
         database_prefix: str = typer.Argument(help="Prefix of the databases to clean up"),
 ):
     """Clean up measurement results for a specified application container."""
