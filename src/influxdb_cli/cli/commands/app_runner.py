@@ -11,7 +11,9 @@ def run_app(
                                                   "to run measurement on"),
         config_path: str = typer.Argument(help="Path to the application config file"),
         check_interval: int = typer.Option(5, "--check-interval", "-c",
-                                          help="Interval in seconds to check container status")
+                                          help="Interval in seconds to check container status"),
+        database_prefix: str = typer.Option("test", "--database-prefix", "-d",
+                                          help="Prefix for the databases to be used.")
 ):
     """Run measurement for a specified application container."""
     app_runner = AppRunner(
@@ -19,7 +21,7 @@ def run_app(
         docker_container_name=container_name,
         influxdb_cli=InfluxClient()
     )
-    app_runner.run(check_interval_sec=check_interval)
+    app_runner.run(check_interval_sec=check_interval, database_prefix=database_prefix)
 
 @app.command(name="clean-up", help="Clean up measurement results for an application.")
 def clean_up(
