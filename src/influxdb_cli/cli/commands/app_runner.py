@@ -3,7 +3,7 @@ import typer
 from influxdb_cli.core.app_runner import AppRunner, clean_up
 from influxdb_cli.core.influx_client import InfluxClient
 
-app = typer.Typer(name="measurement")
+app = typer.Typer(name="app-runner", help="Commands to run application measurements and clean up results.")
 
 @app.command(name="run", help="Run an application measurement.")
 def run_app(

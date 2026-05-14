@@ -32,15 +32,17 @@ def clean_up(database_prefix: str = "test"):
     influxdb_cli = InfluxClient()
     databases = influxdb_cli.list_databases(prefix=database_prefix)
     for db in databases:
-        influxdb_cli.clean_database(
-            database_name=db,
+        logs = influxdb_cli.execute_method_on_db(
+            method=influxdb_cli.clean_database,
+            database=db,
             exclude_measurements=["driveline_power_data"]
         )
-        influxdb_cli.add_first_timestamp_to_batch_measurement(
-            database_name=db,
-            measurement_name="driveline_power_data",
+        influxdb_cli.execute_method_on_db(
+            method=influxdb_cli.add_first_timestamp_to_batch_measurement,
+            database=db,
+            measurement_name="driveline_power_data"
         )
-        print("Cleaned up database:", db)
+        print(logs)
 
 
 class AppRunner:
