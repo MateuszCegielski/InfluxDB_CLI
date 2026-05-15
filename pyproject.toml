@@ -15,3 +15,18 @@ dependencies = [
 ]
 [project.scripts]
 influx = "influxdb_cli.cli.main:app"
+
+[project.optional-dependencies]
+test = [
+    "pytest==9.0.2",
+]
+dev = [
+    "pytest==9.0.2",
+    "ruff>=0.5.0",
+    "black>=24.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
