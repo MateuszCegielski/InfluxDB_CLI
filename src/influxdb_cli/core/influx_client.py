@@ -1,8 +1,10 @@
 from pathlib import Path
 
 import pandas as pd
+import rich
 from influxdb import DataFrameClient
 from influxdb_cli.config.config_manager import load_config, save_config
+from rich.table import Table
 
 EXTENSIONS_READER_MAPPING = {
     '.csv': pd.read_csv,
@@ -107,14 +109,37 @@ class InfluxClient(DataFrameClient):
 
         return df_dict
 
+    def is_valid_database(self, database: str) -> bool:
+        return database in self.list_databases()
+
+    def ensure_database_exists(self, database: str):
+        if not self.is_valid_database(database):
+            raise ValueError(f"Database '{database}' does not exist.")
+        return
+
+    def ensure_database_not_exists(self, database: str):
+        if self.is_valid_database(database):
+            raise ValueError(f"Database '{database}' already exist.")
+
+    def execute_method_on_db(self, method, database: str | None = None, *args, **kwargs):
+        prev_db = self.config.database
+        if database:
+            self.ensure_database_exists(database)
+            self.switch_database(database)
+        else:
+            self.ensure_database_exists(prev_db)
+        try:
+            return method(*args, **kwargs)
+        finally:
+            self.switch_database(prev_db)
+
     def is_default_rp(self, default_rp: bool) -> str:
         if default_rp:
             return "DEFAULT"
         return ""
 
     def create_database(self, dbname: str, retention_policy: bool = False):
-        if dbname in self.list_databases():
-            raise ValueError(f"Database '{dbname}' already exists.")
+        self.ensure_database_not_exists(dbname)
         self.query(f"CREATE DATABASE {dbname}")
         if retention_policy is None:
             return
@@ -131,41 +156,46 @@ class InfluxClient(DataFrameClient):
         return
 
     def delete_database(self, dbname: str):
+        self.ensure_database_exists(dbname)
         self.query(f"DROP DATABASE {dbname}")
         return
 
     def list_databases(self, prefix: str = "") -> list[str]:
-        result = self.query("SHOW DATABASES")
-        databases = [db['name'] for db in result.get_points() if db['name'].startswith(prefix)]
+        databases = [db['name'] for db in self.get_list_database() if db['name'].startswith(prefix)]
         if not databases:
             raise ValueError("No databases found.")
         return databases
 
-    def list_retention_policies(self, dbname: str) -> list[dict]:
-        result = self.query(f"SHOW RETENTION POLICIES ON {dbname}")
-        rps = []
-        for rp in result.get_points():
-            rps.append({
-                "name": rp["name"],
-                "duration": rp["duration"],
-                "replication": rp["replicaN"],
-                "shard_duration": rp["shardGroupDuration"],
-                "default": rp["default"]
-            })
-        return rps
+    def get_retention_policy_table(self) -> Table:
+        table = Table(title=f"Retention Policies: {self.config.database}")
+        table.add_column("Name", style="cyan")
+        table.add_column("Duration", style="magenta")
+        table.add_column("Shard Duration")
+        table.add_column("Replication", justify="right")
+        table.add_column("Default", justify="center")
+
+        for rp in self.get_list_retention_policies(self.config.database):
+            table.add_row(
+                str(rp.get("name", "")),
+                str(rp.get("duration", "")),
+                str(rp.get("shardGroupDuration", "")),
+                str(rp.get("replicaN", "")),
+                "Yes" if rp.get("default") else "No",
+            )
+        return table
 
     def delete_retention_policy(self, dbname: str, rp_name: str):
+        self.ensure_database_exists(dbname)
         self.query(f"DROP RETENTION POLICY {rp_name} ON {dbname}")
         return
 
     def modify_retention_policy(
             self,
             retention_policy_name: str,
-            database: str,
             new_duration: str | None = None,
             new_replication: int | None = None,
             set_default: bool = False
-    ):
+    ) -> str:
         query_parts = []
         if new_duration:
             query_parts.append(f"DURATION {new_duration}")
@@ -175,8 +205,8 @@ class InfluxClient(DataFrameClient):
             query_parts.append("DEFAULT")
         query_str = " ".join(query_parts)
         if query_str:
-            self.query(f"ALTER RETENTION POLICY {retention_policy_name} ON {database} {query_str}")
-        return
+            self.query(f"ALTER RETENTION POLICY {retention_policy_name} ON {self.config.database} {query_str}")
+        return f"Modify Retention Policies on {self.config.database} database successfully."
 
     def switch_database(self, database_name: str):
         super().switch_database(database_name)
@@ -184,23 +214,14 @@ class InfluxClient(DataFrameClient):
         save_config(self.config)
         return
 
-    def show_measurements(self, database_name: str | None = None) -> list[str]:
-        prev_database = self.config.database
-        if database_name:
-            self.switch_database(database_name)
-        result = self.query("SHOW MEASUREMENTS")
-        measurements = [measurement['name'] for measurement in result.get_points()]
-        if database_name and prev_database:
-            self.switch_database(prev_database)
-        return measurements
+    def show_measurements(self) -> list[str]:
+        return [measurement['name'] for measurement in self.get_list_measurements()]
 
     def add_first_timestamp_to_batch_measurement(
-            self,
-            database_name: str,
-            measurement_name: str,
-            batch_measurement_name: str = "batch_timestamps"
+        self,
+        measurement_name: str,
+        batch_measurement_name: str = "batch_timestamps",
     ):
-        self.switch_database(database_name)
         query = f"""SELECT * FROM {measurement_name} ORDER BY time ASC LIMIT 1"""
         result = self.query(query)
         first_timestamp = result[measurement_name]['time'].iloc[0]
@@ -212,25 +233,19 @@ class InfluxClient(DataFrameClient):
         self.write_points(
             dataframe=batch_data,
             measurement=batch_measurement_name,
-            database=database_name,
+            database=self.config.database,
             time_precision='ms',
             batch_size=1000
         )
-        print(f"Added the first timestamp {first_timestamp_str} for measurement "
-              f"'{measurement_name}' in database '{database_name}'.")
-        return
+        return (f"Added the first timestamp {first_timestamp_str} for measurement "
+              f"'{measurement_name}' in database '{self.config.database}'.")
 
-    def delete_measurement(self, measurement_name: str, database_name: str | None = None):
-        prev_db = self.config.database
-        database_name = database_name or self.config.database
-        self.switch_database(database_name)
+    def delete_measurement(self, measurement_name: str):
         self.query(f"DROP MEASUREMENT {measurement_name}")
-        self.switch_database(prev_db)
         return
 
     def add_measurements(
             self,
-            database_name: str | None = None,
             file_path: str | None = None,
             measurement_name: str | None = None,
             add_batch_timestamp: bool = False
@@ -244,13 +259,13 @@ class InfluxClient(DataFrameClient):
         self.write_points(
             dataframe=data,
             measurement=measurement_name,
-            database=database_name or self.config.database,
+            database=self.config.database,
             time_precision='ms',
             batch_size=1000
         )
         if add_batch_timestamp:
             self.add_first_timestamp_to_batch_measurement(
-                database_name=database_name or self.config.database,
+                database_name=self.config.database,
                 measurement_name=measurement_name
             )
         return len(data)
@@ -291,7 +306,6 @@ class InfluxClient(DataFrameClient):
     def show_measurement(
             self,
             measurement_name: str,
-            database_name: str,
             retention_policy: str | None = None,
             column_names: str | list[str] | None = None,
             from_time: str | None = None,
@@ -300,48 +314,56 @@ class InfluxClient(DataFrameClient):
             limit: int | None = None,
             path: str | None = None
     ) -> pd.DataFrame | int:
-        prev_db = self.config.database
-        try:
-            from_time = timestamp_passer(from_time) if from_time else None
-            to_time = timestamp_passer(to_time) if to_time else None
+        from_time = timestamp_passer(from_time) if from_time else None
+        to_time = timestamp_passer(to_time) if to_time else None
 
-            self.switch_database(database_name)
+        if isinstance(column_names, str):
+            column_names = [column_names]
 
-            if isinstance(column_names, str):
-                column_names = [column_names]
+        select_clause = ", ".join(column_names) if column_names else "*"
+        from_clause = f"{retention_policy}.{measurement_name}" if retention_policy else measurement_name
 
-            select_clause = ", ".join(column_names) if column_names else "*"
+        conditions = []
+        if from_time:
+            conditions.append(f"time >= '{from_time}'")
+        if to_time:
+            conditions.append(f"time <= '{to_time}'")
+        if where_clause:
+            conditions.append(where_clause)
 
-            from_clause = f"{retention_policy}.{measurement_name}" if retention_policy else measurement_name
+        where_clause_str = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        limit_clause = f" LIMIT {limit}" if limit else ""
 
-            conditions = []
-            if from_time:
-                conditions.append(f"time >= '{from_time}'")
-            if to_time:
-                conditions.append(f"time <= '{to_time}'")
-            if where_clause:
-                conditions.append(where_clause)
+        query = f"SELECT {select_clause} FROM {from_clause}{where_clause_str}{limit_clause}"
+        result = self.query(query)
+        df_result = pd.DataFrame(result[measurement_name]).set_index("time", drop=True)
+        if path:
+            file_writer(df_result, path)
+            return len(df_result)
+        return df_result
 
-            where_clause_str = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-            limit_clause = f" LIMIT {limit}" if limit else ""
-
-            query = f"SELECT {select_clause} FROM {from_clause}{where_clause_str}{limit_clause}"
-            result = self.query(query)
-            df_result = pd.DataFrame(result[measurement_name]).set_index("time", drop=True)
-            if path:
-                file_writer(df_result, path)
-                return len(df_result)
-            return pd.DataFrame(result[measurement_name])
-        finally:
-            self.switch_database(prev_db)
-
-    def clean_database(self, database_name: str, exclude_measurements: list[str] | None = None):
-        prev_db = self.config.database
-        self.switch_database(database_name)
+    def clean_database(self, exclude_measurements: list[str] | None = None) -> str:
         measurements = self.show_measurements()
+        measurement_set = set(measurements)
+
+        excluded = exclude_measurements or []
+        missing = [m for m in excluded if m not in measurement_set]
+        if missing:
+            raise ValueError(
+                f"Measurement(s) {missing} not found in database '{self.config.database}'."
+            )
+
+        excluded_set = set(excluded)
+        deleted_count = 0
         for measurement in measurements:
-            if exclude_measurements and measurement in exclude_measurements:
+            if measurement in excluded_set:
                 continue
             self.query(f"DROP MEASUREMENT {measurement}")
-        self.switch_database(prev_db)
-        return
+            deleted_count += 1
+
+        if excluded:
+            return (
+                f"Deleted {deleted_count} measurement(s) from database '{self.config.database}', "
+                f"except: {', '.join(excluded)}."
+            )
+        return f"Deleted {deleted_count} measurement(s) from database '{self.config.database}'."
